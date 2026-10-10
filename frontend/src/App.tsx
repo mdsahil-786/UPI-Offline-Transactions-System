@@ -1,9 +1,13 @@
 import { NavLink, Navigate, Route, Routes } from 'react-router-dom';
 import { AdminPage } from './features/admin/AdminPage';
+import { WalletPage } from './features/wallet/WalletPage';
 import styles from './App.module.css';
 
-// Add one entry here as each later phase lands (Wallet, Security Lab, Simulation...).
-const NAV_ITEMS = [{ to: '/admin', label: 'Admin' }];
+const NAV_ITEMS = [
+    { to: '/wallet', label: 'Wallet' },
+    { to: '/admin', label: 'Admin' },
+];
+
 
 export function App() {
     return (
@@ -27,7 +31,8 @@ export function App() {
 
             <main>
                 <Routes>
-                    <Route path="/" element={<Navigate to="/admin" replace />} />
+                    <Route path="/" element={<Navigate to="/wallet" replace />} />
+                    <Route path="/wallet" element={<WalletPage />} />
                     <Route path="/admin" element={<AdminPage />} />
                     <Route path="*" element={<div className="page">Page not found.</div>} />
                 </Routes>
