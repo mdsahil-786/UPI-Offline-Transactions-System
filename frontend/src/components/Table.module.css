@@ -1,0 +1,9 @@
+.table {
+    font-size: var(--text-md);
+}
+
+.empty {
+    text-align: center;
+    color: var(--color-text-muted);
+    padding: var(--space-5);
+}

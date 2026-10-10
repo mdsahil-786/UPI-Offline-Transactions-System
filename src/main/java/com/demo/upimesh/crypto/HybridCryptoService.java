@@ -23,11 +23,9 @@ import java.util.Base64;
  * Hybrid encryption — the same pattern used by TLS, PGP, Signal, etc.
  *
  * Why hybrid? RSA can only encrypt small data (~245 bytes for a 2048-bit key).
- * Our payment instruction (JSON) might be ~300 bytes, and in real use we might
- * include device certificates and signatures pushing it well over.
- *
- * Solution: generate a fresh AES key per packet, encrypt the JSON with AES-GCM
- * (fast + authenticated), then encrypt JUST the AES key with RSA-OAEP.
+ * Our signed envelope is larger than that, so we generate a fresh AES key per
+ * packet, encrypt the data with AES-GCM (fast + authenticated), then encrypt
+ * JUST the AES key with RSA-OAEP.
  *
  * Wire format (after base64 encoding):
  *   [ 256 bytes RSA-encrypted AES key ][ 12 bytes GCM IV ][ ciphertext + 16-byte tag ]
@@ -54,11 +52,14 @@ public class HybridCryptoService {
 
     /**
      * Encrypt a payment instruction with the server's public key.
-     * Called by the simulated sender device.
+     * Kept so existing callers and the round-trip test still work.
      */
     public String encrypt(PaymentInstruction instruction, PublicKey serverPublicKey) throws Exception {
-        byte[] plaintext = json.writeValueAsBytes(instruction);
+        return encryptBytes(json.writeValueAsBytes(instruction), serverPublicKey);
+    }
 
+    /** Hybrid-encrypt arbitrary bytes. Used for the signed envelope. */
+    public String encryptBytes(byte[] plaintext, PublicKey serverPublicKey) throws Exception {
         // 1. Generate a one-time AES key for this packet.
         KeyGenerator kg = KeyGenerator.getInstance("AES");
         kg.init(AES_KEY_BITS);
@@ -88,11 +89,20 @@ public class HybridCryptoService {
     }
 
     /**
-     * Decrypt with the server's private key.
+     * Decrypt straight into a PaymentInstruction. Only valid for packets whose
+     * plaintext is a bare instruction (the round-trip test). The ingestion
+     * pipeline uses decryptBytes() because it needs the signed envelope.
+     */
+    public PaymentInstruction decrypt(String base64Ciphertext) throws Exception {
+        return json.readValue(decryptBytes(base64Ciphertext), PaymentInstruction.class);
+    }
+
+    /**
+     * Decrypt with the server's private key and return the raw plaintext bytes.
      * If anything has been tampered with — wrong key, modified ciphertext,
      * truncated input — this throws.
      */
-    public PaymentInstruction decrypt(String base64Ciphertext) throws Exception {
+    public byte[] decryptBytes(String base64Ciphertext) throws Exception {
         byte[] all = Base64.getDecoder().decode(base64Ciphertext);
 
         if (all.length < RSA_ENCRYPTED_KEY_BYTES + GCM_IV_BYTES + GCM_TAG_BITS / 8) {
@@ -120,9 +130,7 @@ public class HybridCryptoService {
         // 2. AES-GCM decrypt + verify the tag.
         Cipher aes = Cipher.getInstance(AES_TRANSFORMATION);
         aes.init(Cipher.DECRYPT_MODE, aesKey, new GCMParameterSpec(GCM_TAG_BITS, iv));
-        byte[] plaintext = aes.doFinal(aesCiphertext);
-
-        return json.readValue(plaintext, PaymentInstruction.class);
+        return aes.doFinal(aesCiphertext);
     }
 
     /**
