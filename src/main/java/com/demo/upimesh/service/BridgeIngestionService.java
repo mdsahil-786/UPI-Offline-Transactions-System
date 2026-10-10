@@ -25,10 +25,10 @@ import java.util.Base64;
  *   2. Claim the hash (idempotency). Duplicate -> drop.
  *   3. Decrypt (GCM tag verifies integrity). Failure -> decryption_failed.
  *   4. Parse the signed envelope {payload, sig}. Failure -> malformed_envelope.
- *   5. Look up the sender's registered device. None -> unknown_device.
+ *   5. Look up the sender's registered device. None -> unknown_device (claim released).
  *   6. Verify the signature over the decoded payload bytes. Failure -> bad_signature.
  *   7. Freshness check (replay protection).
- *   8. Settle.
+ *   8. Settle. Insufficient funds -> REJECTED. Unexpected error -> claim released.
  */
 @Service
 public class BridgeIngestionService {
@@ -47,8 +47,9 @@ public class BridgeIngestionService {
     private long maxAgeSeconds;
 
     public IngestResult ingest(MeshPacket packet, String bridgeNodeId, int hopCount) {
+        String packetHash = null;
         try {
-            String packetHash = crypto.hashCiphertext(packet.getCiphertext());
+            packetHash = crypto.hashCiphertext(packet.getCiphertext());
             String shortHash = packetHash.substring(0, 12) + "...";
 
             // ---- Idempotency gate ----
@@ -91,6 +92,8 @@ public class BridgeIngestionService {
             Device device = devices.findById(instruction.getSenderVpa()).orElse(null);
             if (device == null) {
                 log.warn("Packet {} claims unregistered sender {}", shortHash, instruction.getSenderVpa());
+                // The sender may register later; don't let this hash block a legitimate retry.
+                idempotency.release(packetHash);
                 return IngestResult.invalid(packetHash, "unknown_device");
             }
             if (!signatures.verify(device.getPublicKey(), payloadBytes, signature)) {
@@ -110,17 +113,26 @@ public class BridgeIngestionService {
 
             // ---- Settle ----
             Transaction tx = settlement.settle(instruction, packetHash, bridgeNodeId, hopCount);
+            if (tx.getStatus() == Transaction.Status.REJECTED) {
+                return IngestResult.rejected(packetHash, tx);
+            }
             return IngestResult.settled(packetHash, tx);
 
         } catch (Exception e) {
             log.error("Ingestion error: {}", e.getMessage(), e);
-            return IngestResult.invalid("?", "internal_error: " + e.getMessage());
+            // Unexpected failure (e.g. transient DB error): nothing settled, so allow a retry.
+            if (packetHash != null) idempotency.release(packetHash);
+            return IngestResult.invalid(packetHash == null ? "?" : packetHash,
+                    "internal_error: " + e.getMessage());
         }
     }
 
     public record IngestResult(String outcome, String packetHash, String reason, Long transactionId) {
         public static IngestResult settled(String hash, Transaction tx) {
             return new IngestResult("SETTLED", hash, null, tx.getId());
+        }
+        public static IngestResult rejected(String hash, Transaction tx) {
+            return new IngestResult("REJECTED", hash, "insufficient_balance", tx.getId());
         }
         public static IngestResult duplicate(String hash) {
             return new IngestResult("DUPLICATE_DROPPED", hash, null, null);

@@ -6,7 +6,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 // Tokens must load before global.css, which reads them via var(--...).
 import './styles/tokens.css';
 import './styles/global.css';
-import './crypto/smokeTest';
+import './crypto/e2eTest';
 
 import { App } from './App';
 

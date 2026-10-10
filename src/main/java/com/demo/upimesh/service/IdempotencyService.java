@@ -39,6 +39,12 @@ public class IdempotencyService {
         return prev == null;
     }
 
+
+    /** Give a hash back so a legitimate retry isn't dropped as a duplicate. */
+    public void release(String packetHash) {
+        seen.remove(packetHash);
+    }
+
     public int size() {
         return seen.size();
     }

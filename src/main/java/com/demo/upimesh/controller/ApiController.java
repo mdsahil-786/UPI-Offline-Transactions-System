@@ -173,4 +173,33 @@ public class ApiController {
     public List<Transaction> listTransactions() {
         return txRepo.findTop20ByOrderByIdDesc();
     }
+
+
+
+    public static class InjectRequest {
+        public String deviceId;
+        public MeshPacket packet;
+    }
+
+    /**
+     * Drop a browser-built packet into the mesh at the given device.
+     * Replaces /api/demo/send, which built packets on the server.
+     */
+    @PostMapping("/mesh/inject")
+    public ResponseEntity<?> meshInject(@RequestBody InjectRequest req) {
+        MeshPacket p = req.packet;
+        if (req.deviceId == null || p == null
+                || p.getPacketId() == null || p.getPacketId().length() < 8
+                || p.getCiphertext() == null || p.getCiphertext().isBlank()
+                || p.getTtl() < 0) {
+            return ResponseEntity.badRequest().body(Map.of(
+                    "message", "deviceId and a packet with packetId (8+ chars), ttl >= 0 and ciphertext are required"));
+        }
+        try {
+            mesh.inject(req.deviceId, p);
+        } catch (IllegalArgumentException e) {
+            return ResponseEntity.status(404).body(Map.of("message", e.getMessage()));
+        }
+        return ResponseEntity.ok(Map.of("injectedAt", req.deviceId, "packetId", p.getPacketId()));
+    }
 }

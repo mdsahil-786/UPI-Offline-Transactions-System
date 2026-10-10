@@ -1,7 +1,9 @@
 // ---- Outcomes -------------------------------------------------------------
 
 /** Result of BridgeIngestionService.ingest() */
-export type IngestOutcome = 'SETTLED' | 'DUPLICATE_DROPPED' | 'INVALID';
+// export type IngestOutcome = 'SETTLED' | 'DUPLICATE_DROPPED' | 'INVALID';
+
+export type IngestOutcome = 'SETTLED' | 'REJECTED' | 'DUPLICATE_DROPPED' | 'INVALID';
 
 /** Transaction.Status in the ledger */
 export type TransactionStatus = 'SETTLED' | 'REJECTED';
@@ -92,6 +94,27 @@ export interface ServerKeyInfo {
     algorithm: string;
     hybridScheme: string;
 }
+// ---- Devices --------------------------------------------------------------
+
+export interface RegisterDeviceRequest {
+    vpa: string;
+    deviceId: string;
+    publicKey: string; // base64 X.509 SPKI, P-256
+}
+
+export interface DeviceInfo {
+    vpa: string;
+    deviceId: string;
+    registeredAt: string; // ISO-8601
+}
+
+
+
+
+
+
+
+
 
 // ---- Legacy demo endpoint (retired in Phase 3) ----------------------------
 
