@@ -2,12 +2,13 @@ import { NavLink, Navigate, Route, Routes } from 'react-router-dom';
 import { AdminPage } from './features/admin/AdminPage';
 import { WalletPage } from './features/wallet/WalletPage';
 import styles from './App.module.css';
+import { SecurityLabPage } from './features/security/SecurityLabPage';
 
 const NAV_ITEMS = [
     { to: '/wallet', label: 'Wallet' },
+    { to: '/security', label: 'Security Lab' },
     { to: '/admin', label: 'Admin' },
 ];
-
 
 export function App() {
     return (
@@ -35,6 +36,7 @@ export function App() {
                     <Route path="/wallet" element={<WalletPage />} />
                     <Route path="/admin" element={<AdminPage />} />
                     <Route path="*" element={<div className="page">Page not found.</div>} />
+                    <Route path="/security" element={<SecurityLabPage />} />
                 </Routes>
             </main>
         </>
