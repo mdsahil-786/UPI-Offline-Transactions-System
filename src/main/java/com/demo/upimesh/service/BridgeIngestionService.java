@@ -17,18 +17,20 @@ import org.springframework.stereotype.Service;
 
 import java.time.Instant;
 import java.util.Base64;
+import java.util.UUID;
 
 /**
  * Server-side pipeline for one inbound packet:
  *
- *   1. Hash the ciphertext.
- *   2. Claim the hash (idempotency). Duplicate -> drop.
- *   3. Decrypt (GCM tag verifies integrity). Failure -> decryption_failed.
- *   4. Parse the signed envelope {payload, sig}. Failure -> malformed_envelope.
- *   5. Look up the sender's registered device. None -> unknown_device (claim released).
- *   6. Verify the signature over the decoded payload bytes. Failure -> bad_signature.
- *   7. Freshness check (replay protection).
- *   8. Settle. Insufficient funds -> REJECTED. Unexpected error -> claim released.
+ *   HASH       hash the ciphertext
+ *   CLAIM      claim the hash (idempotency). Duplicate -> drop.
+ *   DECRYPT    decrypt (the GCM tag verifies integrity)
+ *   VERIFY     parse the signed envelope, find the sender's registered device,
+ *              verify the signature over the decoded payload bytes
+ *   FRESHNESS  replay protection
+ *   SETTLE     balance check, debit, credit, ledger row
+ *
+ * Each stage publishes a "stage" event so the live simulation can light it up.
  */
 @Service
 public class BridgeIngestionService {
@@ -40,6 +42,7 @@ public class BridgeIngestionService {
     @Autowired private SettlementService settlement;
     @Autowired private DeviceRepository devices;
     @Autowired private SignatureService signatures;
+    @Autowired private EventBus bus;
 
     private final ObjectMapper json = new ObjectMapper();
 
@@ -47,16 +50,36 @@ public class BridgeIngestionService {
     private long maxAgeSeconds;
 
     public IngestResult ingest(MeshPacket packet, String bridgeNodeId, int hopCount) {
+        String ingestId = UUID.randomUUID().toString().substring(0, 8);
+        bus.publish("ingest-start", EventBus.fields(
+                "ingestId", ingestId,
+                "bridgeNodeId", bridgeNodeId,
+                "packetId", shortId(packet.getPacketId()),
+                "hops", hopCount));
+
+        IngestResult result = process(ingestId, packet, bridgeNodeId, hopCount);
+
+        bus.publish("ingest-done", EventBus.fields(
+                "ingestId", ingestId,
+                "outcome", result.outcome(),
+                "reason", result.reason()));
+        return result;
+    }
+
+    private IngestResult process(String ingestId, MeshPacket packet, String bridgeNodeId, int hopCount) {
         String packetHash = null;
         try {
             packetHash = crypto.hashCiphertext(packet.getCiphertext());
             String shortHash = packetHash.substring(0, 12) + "...";
+            stage(ingestId, "HASH", true, "SHA-256 " + packetHash.substring(0, 12) + "…");
 
             // ---- Idempotency gate ----
             if (!idempotency.claim(packetHash)) {
                 log.info("DUPLICATE packet {} from bridge {} — dropped", shortHash, bridgeNodeId);
+                stage(ingestId, "CLAIM", false, "already claimed, duplicate dropped");
                 return IngestResult.duplicate(packetHash);
             }
+            stage(ingestId, "CLAIM", true, "first claim of this fingerprint");
 
             // ---- Decrypt ----
             byte[] plaintext;
@@ -64,8 +87,10 @@ public class BridgeIngestionService {
                 plaintext = crypto.decryptBytes(packet.getCiphertext());
             } catch (Exception e) {
                 log.warn("Decryption failed for packet {}: {}", shortHash, e.getMessage());
+                stage(ingestId, "DECRYPT", false, "decryption_failed: " + e.getMessage());
                 return IngestResult.invalid(packetHash, "decryption_failed");
             }
+            stage(ingestId, "DECRYPT", true, "RSA-OAEP key unwrapped, GCM tag verified");
 
             // ---- Parse envelope ----
             byte[] payloadBytes;
@@ -80,11 +105,13 @@ public class BridgeIngestionService {
                 instruction = json.readValue(payloadBytes, PaymentInstruction.class);
             } catch (Exception e) {
                 log.warn("Malformed envelope in packet {}: {}", shortHash, e.getMessage());
+                stage(ingestId, "VERIFY", false, "malformed_envelope");
                 return IngestResult.invalid(packetHash, "malformed_envelope");
             }
 
             if (instruction.getSenderVpa() == null || instruction.getReceiverVpa() == null
                     || instruction.getAmount() == null || instruction.getSignedAt() == null) {
+                stage(ingestId, "VERIFY", false, "malformed_payload");
                 return IngestResult.invalid(packetHash, "malformed_payload");
             }
 
@@ -94,28 +121,38 @@ public class BridgeIngestionService {
                 log.warn("Packet {} claims unregistered sender {}", shortHash, instruction.getSenderVpa());
                 // The sender may register later; don't let this hash block a legitimate retry.
                 idempotency.release(packetHash);
+                stage(ingestId, "VERIFY", false, "unknown_device: no key registered for " + instruction.getSenderVpa());
                 return IngestResult.invalid(packetHash, "unknown_device");
             }
             if (!signatures.verify(device.getPublicKey(), payloadBytes, signature)) {
                 log.warn("Bad signature on packet {} claiming sender {}", shortHash, instruction.getSenderVpa());
+                stage(ingestId, "VERIFY", false, "bad_signature: does not match the key registered for " + instruction.getSenderVpa());
                 return IngestResult.invalid(packetHash, "bad_signature");
             }
+            stage(ingestId, "VERIFY", true, "valid ECDSA signature by " + instruction.getSenderVpa());
 
             // ---- Freshness check (replay protection) ----
             long ageSeconds = (Instant.now().toEpochMilli() - instruction.getSignedAt()) / 1000;
             if (ageSeconds > maxAgeSeconds) {
                 log.warn("Packet {} too old ({}s), rejected", shortHash, ageSeconds);
+                stage(ingestId, "FRESHNESS", false, "stale_packet: signed " + ageSeconds + "s ago");
                 return IngestResult.invalid(packetHash, "stale_packet");
             }
             if (ageSeconds < -300) { // small clock-skew tolerance
+                stage(ingestId, "FRESHNESS", false, "future_dated: signed " + (-ageSeconds) + "s in the future");
                 return IngestResult.invalid(packetHash, "future_dated");
             }
+            stage(ingestId, "FRESHNESS", true, "signed " + Math.max(ageSeconds, 0) + "s ago");
 
             // ---- Settle ----
             Transaction tx = settlement.settle(instruction, packetHash, bridgeNodeId, hopCount);
             if (tx.getStatus() == Transaction.Status.REJECTED) {
+                stage(ingestId, "SETTLE", false, "insufficient_balance: " + instruction.getSenderVpa()
+                        + " cannot cover ₹" + instruction.getAmount());
                 return IngestResult.rejected(packetHash, tx);
             }
+            stage(ingestId, "SETTLE", true, "₹" + instruction.getAmount() + " moved "
+                    + instruction.getSenderVpa() + " → " + instruction.getReceiverVpa() + " (tx #" + tx.getId() + ")");
             return IngestResult.settled(packetHash, tx);
 
         } catch (Exception e) {
@@ -125,6 +162,18 @@ public class BridgeIngestionService {
             return IngestResult.invalid(packetHash == null ? "?" : packetHash,
                     "internal_error: " + e.getMessage());
         }
+    }
+
+    private void stage(String ingestId, String stage, boolean ok, String detail) {
+        bus.publish("stage", EventBus.fields(
+                "ingestId", ingestId,
+                "stage", stage,
+                "status", ok ? "PASS" : "FAIL",
+                "detail", detail));
+    }
+
+    private static String shortId(String id) {
+        return id == null ? "?" : id.length() > 8 ? id.substring(0, 8) : id;
     }
 
     public record IngestResult(String outcome, String packetHash, String reason, Long transactionId) {

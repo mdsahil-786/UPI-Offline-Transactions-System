@@ -3,6 +3,7 @@ package com.demo.upimesh.service;
 import com.demo.upimesh.model.MeshPacket;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 
 import java.util.*;
@@ -18,6 +19,9 @@ import java.util.concurrent.ConcurrentHashMap;
  * When a device with internet (a "bridge node") holds a packet, the demo's
  * /api/mesh/flush endpoint causes it to actually POST that packet to our
  * backend — simulating the moment a phone walks outside and gets 4G.
+ *
+ * Every state change is also published to the EventBus so the live
+ * simulation page can animate it.
  */
 @Service
 public class MeshSimulatorService {
@@ -25,6 +29,8 @@ public class MeshSimulatorService {
     private static final Logger log = LoggerFactory.getLogger(MeshSimulatorService.class);
 
     private final Map<String, VirtualDevice> devices = new ConcurrentHashMap<>();
+
+    @Autowired private EventBus bus;
 
     public MeshSimulatorService() {
         // Default scenario: 4 offline phones in a basement, 1 phone outside with 4G
@@ -47,6 +53,10 @@ public class MeshSimulatorService {
         return devices.get(id);
     }
 
+    private static String shortId(String id) {
+        return id == null ? "?" : id.length() > 8 ? id.substring(0, 8) : id;
+    }
+
     /**
      * Sender drops a packet into the mesh by handing it to their own device.
      */
@@ -56,6 +66,10 @@ public class MeshSimulatorService {
         sender.hold(packet);
         log.info("Packet {} injected at {} (TTL={})",
                 packet.getPacketId().substring(0, 8), senderDeviceId, packet.getTtl());
+        bus.publish("inject", EventBus.fields(
+                "deviceId", senderDeviceId,
+                "packetId", shortId(packet.getPacketId()),
+                "ttl", packet.getTtl()));
     }
 
     /**
@@ -91,11 +105,17 @@ public class MeshSimulatorService {
                     copy.setCiphertext(pkt.getCiphertext());
                     dst.hold(copy);
                     transfers++;
+                    bus.publish("transfer", EventBus.fields(
+                            "from", src.getDeviceId(),
+                            "to", dst.getDeviceId(),
+                            "packetId", shortId(pkt.getPacketId()),
+                            "ttl", copy.getTtl()));
                 }
             }
         }
 
         log.info("Gossip round complete: {} packet transfers", transfers);
+        bus.publish("gossip", EventBus.fields("transfers", transfers));
         return new GossipResult(transfers, snapshotMap());
     }
 
@@ -124,6 +144,7 @@ public class MeshSimulatorService {
 
     public void resetMesh() {
         devices.values().forEach(VirtualDevice::clear);
+        bus.publish("reset", EventBus.fields());
     }
 
     public record GossipResult(int transfers, Map<String, Integer> deviceCounts) {}
