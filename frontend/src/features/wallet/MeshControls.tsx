@@ -18,7 +18,7 @@ const columns: Column<FlushItem>[] = [
     { header: 'Reason', render: (u) => <span className="muted">{u.reason || '—'}</span> },
 ];
 
-export function MeshControls() {
+export function MeshControls({ showDevices = true }: { showDevices?: boolean }) {
     const queryClient = useQueryClient();
     const mesh = useMeshState();
 
@@ -66,17 +66,21 @@ export function MeshControls() {
 
     return (
         <div>
-            <div className={styles.devices}>
-                {(mesh.data?.devices ?? []).map((d) => (
-                    <div key={d.deviceId} className={styles.device}>
-                        <strong className="mono">{d.deviceId}</strong>
-                        <Badge tone={d.hasInternet ? 'online' : 'offline'}>{d.hasInternet ? '4G' : 'offline'}</Badge>
-                        <span className="muted">
-              holding {d.packetCount} packet(s) {d.packetIds.join(' ')}
-            </span>
-                    </div>
-                ))}
-            </div>
+            {showDevices && (
+                <div className={styles.devices}>
+                    {(mesh.data?.devices ?? []).map((d) => (
+                        <div key={d.deviceId} className={styles.device}>
+                            <strong className="mono">{d.deviceId}</strong>
+                            <Badge tone={d.hasInternet ? 'online' : 'offline'}>
+                                {d.hasInternet ? '4G' : 'offline'}
+                            </Badge>
+                            <span className="muted">
+          holding {d.packetCount} packet(s) {d.packetIds.join(' ')}
+        </span>
+                        </div>
+                    ))}
+                </div>
+            )}
 
             <div className={styles.actions}>
                 <Button variant="secondary" onClick={gossip} disabled={busy}>

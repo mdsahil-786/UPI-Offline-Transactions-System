@@ -4,8 +4,11 @@ import { WalletPage } from './features/wallet/WalletPage';
 import styles from './App.module.css';
 import { SecurityLabPage } from './features/security/SecurityLabPage';
 
+import { SimulationPage } from './features/simulation/SimulationPage';
+
 const NAV_ITEMS = [
     { to: '/wallet', label: 'Wallet' },
+    { to: '/simulation', label: 'Simulation' },
     { to: '/security', label: 'Security Lab' },
     { to: '/admin', label: 'Admin' },
 ];
@@ -37,6 +40,7 @@ export function App() {
                     <Route path="/admin" element={<AdminPage />} />
                     <Route path="*" element={<div className="page">Page not found.</div>} />
                     <Route path="/security" element={<SecurityLabPage />} />
+                    <Route path="/simulation" element={<SimulationPage />} />
                 </Routes>
             </main>
         </>

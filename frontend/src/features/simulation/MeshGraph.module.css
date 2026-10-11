@@ -1,0 +1,116 @@
+.svg {
+    width: 100%;
+    height: auto;
+    display: block;
+}
+
+.link {
+    stroke: var(--color-border);
+    stroke-width: 1;
+    opacity: 0.6;
+}
+
+.uplink {
+    stroke: var(--color-online);
+    stroke-width: 1.5;
+    stroke-dasharray: 5 4;
+    opacity: 0.8;
+}
+
+.server {
+    fill: var(--color-surface-2);
+    stroke: var(--color-border);
+    stroke-width: 1.5;
+}
+
+.serverActive {
+    fill: var(--color-surface-2);
+    stroke: var(--color-accent);
+    stroke-width: 2.5;
+}
+
+.serverLabel {
+    fill: var(--color-text);
+    font-size: 13px;
+    font-weight: 600;
+    text-anchor: middle;
+    dominant-baseline: central;
+    font-family: var(--font-sans);
+}
+
+.node {
+    fill: var(--color-bg);
+    stroke: var(--color-border);
+    stroke-width: 2;
+}
+
+.nodeBridge {
+    fill: var(--color-online-bg);
+    stroke: var(--color-online);
+    stroke-width: 2;
+}
+
+.nodeHolding {
+    stroke: var(--color-accent);
+}
+
+.pulse {
+    fill: none;
+    stroke: var(--color-accent);
+    stroke-width: 2;
+    transform-box: fill-box;
+    transform-origin: center;
+    animation: pulse 1s ease-out forwards;
+}
+
+@keyframes pulse {
+    from {
+        transform: scale(1);
+        opacity: 1;
+    }
+    to {
+        transform: scale(1.9);
+        opacity: 0;
+    }
+}
+
+.count {
+    fill: var(--color-text);
+    font-size: 14px;
+    font-weight: 700;
+    text-anchor: middle;
+    dominant-baseline: central;
+    font-family: var(--font-mono);
+}
+
+.label {
+    fill: var(--color-text-muted);
+    font-size: 12px;
+    text-anchor: middle;
+    font-family: var(--font-sans);
+}
+
+.packet {
+    fill: var(--color-accent);
+}
+
+.packetUpload {
+    fill: var(--color-settled);
+}
+
+.legend {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--space-4);
+    margin-top: var(--space-2);
+    font-size: var(--text-sm);
+    color: var(--color-text-muted);
+}
+
+.key {
+    display: inline-block;
+    width: 10px;
+    height: 10px;
+    border-radius: 50%;
+    margin-right: var(--space-1);
+}
