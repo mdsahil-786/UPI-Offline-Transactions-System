@@ -47,9 +47,16 @@ public class Transaction {
     @Column(nullable = false)
     private Status status;
 
+
+    @Column(length = 64)
+    private String rejectReason; // null when SETTLED
+
     public enum Status { SETTLED, REJECTED }
 
     public Transaction() {}
+
+    public String getRejectReason() { return rejectReason; }
+    public void setRejectReason(String rejectReason) { this.rejectReason = rejectReason; }
 
     public Long getId() { return id; }
     public void setId(Long id) { this.id = id; }

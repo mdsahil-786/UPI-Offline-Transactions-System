@@ -147,8 +147,8 @@ public class BridgeIngestionService {
             // ---- Settle ----
             Transaction tx = settlement.settle(instruction, packetHash, bridgeNodeId, hopCount);
             if (tx.getStatus() == Transaction.Status.REJECTED) {
-                stage(ingestId, "SETTLE", false, "insufficient_balance: " + instruction.getSenderVpa()
-                        + " cannot cover ₹" + instruction.getAmount());
+                String why = tx.getRejectReason() == null ? "insufficient_balance" : tx.getRejectReason();
+                stage(ingestId, "SETTLE", false, why + ": " + describeRejection(why, instruction));
                 return IngestResult.rejected(packetHash, tx);
             }
             stage(ingestId, "SETTLE", true, "₹" + instruction.getAmount() + " moved "
@@ -175,13 +175,22 @@ public class BridgeIngestionService {
     private static String shortId(String id) {
         return id == null ? "?" : id.length() > 8 ? id.substring(0, 8) : id;
     }
+    private static String describeRejection(String reason, PaymentInstruction i) {
+        return switch (reason) {
+            case "per_transaction_limit" -> "₹" + i.getAmount() + " is above this wallet's per-payment limit";
+            case "allowance_exceeded" -> i.getSenderVpa() + " has less than ₹" + i.getAmount() + " left in the offline wallet";
+            case "no_offline_wallet" -> i.getSenderVpa() + " has no offline wallet and this server requires one";
+            default -> i.getSenderVpa() + " cannot cover ₹" + i.getAmount();
+        };
+    }
 
     public record IngestResult(String outcome, String packetHash, String reason, Long transactionId) {
         public static IngestResult settled(String hash, Transaction tx) {
             return new IngestResult("SETTLED", hash, null, tx.getId());
         }
         public static IngestResult rejected(String hash, Transaction tx) {
-            return new IngestResult("REJECTED", hash, "insufficient_balance", tx.getId());
+            String why = tx.getRejectReason() == null ? "insufficient_balance" : tx.getRejectReason();
+            return new IngestResult("REJECTED", hash, why, tx.getId());
         }
         public static IngestResult duplicate(String hash) {
             return new IngestResult("DUPLICATE_DROPPED", hash, null, null);
