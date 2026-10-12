@@ -14,6 +14,8 @@ import type { AttackResult } from './AttackCard.tsx';
 import { ATTACKS } from './attacks';
 import type { Attack } from './attacks';
 import styles from './SecurityLabPage.module.css';
+import { closeWallet } from '../../api/wallets';
+import { WALLETS_KEY } from '../../hooks/useWallets';
 
 const SENDER_VPA = 'alice@demo';
 
@@ -45,6 +47,8 @@ export function SecurityLabPage() {
         setRunning(attack.id);
         let outcome: AttackResult;
         try {
+            // Baseline cards run with no offline wallet. The wallet cards set up their own.
+            if (!attack.ownsWallet) await closeWallet(device.vpa);
             const accounts = await getAccounts();
             const balance = Number(accounts.find((a) => a.vpa === device.vpa)?.balance ?? 0);
             outcome = { steps: await attack.run({ device, balance }) };
@@ -54,7 +58,7 @@ export function SecurityLabPage() {
         setResults((prev) => ({ ...prev, [attack.id]: outcome }));
         setRunning(null);
         await Promise.all(
-            [ACCOUNTS_KEY, TRANSACTIONS_KEY, MESH_STATE_KEY].map((key) =>
+            [ACCOUNTS_KEY, TRANSACTIONS_KEY, MESH_STATE_KEY, WALLETS_KEY].map((key) =>
                 queryClient.invalidateQueries({ queryKey: key }),
             ),
         );

@@ -113,4 +113,15 @@ class OfflineWalletTest {
         assertEquals("SETTLED", r.outcome());
         assertEquals(0, before.subtract(new BigDecimal("10")).compareTo(balance(SENDER)));
     }
+
+    @Test
+    void closingReturnsEscrowAndRemovesTheWallet() {
+        BigDecimal before = balance(SENDER);
+        walletService.load(SENDER, new BigDecimal("300"));
+
+        walletService.close(SENDER);
+
+        assertEquals(0, before.compareTo(balance(SENDER)));
+        assertFalse(wallets.existsById(SENDER));
+    }
 }

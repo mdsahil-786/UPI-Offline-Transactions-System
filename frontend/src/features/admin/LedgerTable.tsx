@@ -13,6 +13,7 @@ const columns: Column<Transaction>[] = [
         render: (t) => <span className="mono">₹{Number(t.amount).toFixed(2)}</span>,
     },
     { header: 'Status', render: (t) => <Badge tone={t.status} /> },
+    { header: 'Reason', render: (t) => <span className="muted">{t.rejectReason ?? '—'}</span> },
     { header: 'Bridge', render: (t) => t.bridgeNodeId },
     { header: 'Hops', render: (t) => t.hopCount },
     {

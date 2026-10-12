@@ -56,4 +56,14 @@ public class WalletController {
             return ResponseEntity.badRequest().body(Map.of("message", e.getMessage()));
         }
     }
+
+    @PostMapping("/{vpa}/close")
+    public ResponseEntity<?> close(@PathVariable String vpa) {
+        try {
+            wallets.close(vpa);
+            return ResponseEntity.ok(Map.of("status", "closed"));
+        } catch (IllegalArgumentException e) {
+            return ResponseEntity.badRequest().body(Map.of("message", e.getMessage()));
+        }
+    }
 }

@@ -86,4 +86,17 @@ public class WalletService {
         accounts.save(account);
         return wallets.save(wallet);
     }
+
+
+    /** Return any escrow to the balance and remove the wallet entirely. Safe when none exists. */
+    @Transactional
+    public void close(String vpa) {
+        OfflineWallet wallet = wallets.findById(vpa).orElse(null);
+        if (wallet == null) return;
+        Account account = accounts.findById(vpa)
+                .orElseThrow(() -> new IllegalArgumentException("Unknown VPA: " + vpa));
+        account.setBalance(account.getBalance().add(wallet.getEscrow()));
+        accounts.save(account);
+        wallets.delete(wallet);
+    }
 }

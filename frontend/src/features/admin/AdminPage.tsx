@@ -5,6 +5,7 @@ import { useAccounts } from '../../hooks/useAccounts';
 import { useTransactions } from '../../hooks/useTransactions';
 import { useMeshState } from '../../hooks/useMeshState';
 import styles from './AdminPage.module.css';
+import { WalletsTable } from './WalletsTable';
 
 // The H2 console is served by Spring Boot, not Vite, so link to :8080 directly.
 const H2_CONSOLE_URL = 'http://localhost:8080/h2-console';
@@ -47,7 +48,11 @@ export function AdminPage() {
                     </dl>
                 </Card>
             </div>
-
+            <div className={styles.ledger}>
+                <Card title="Offline wallets (escrow)">
+                    <WalletsTable />
+                </Card>
+            </div>
             <div className={styles.ledger}>
                 <Card title="Transaction Ledger (last 20)">
                     <LedgerTable />

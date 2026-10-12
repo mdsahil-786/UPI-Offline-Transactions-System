@@ -31,6 +31,7 @@ export interface Transaction {
     bridgeNodeId: string;
     hopCount: number;
     status: TransactionStatus;
+    rejectReason: string | null;
 }
 
 /** Wire format that hops between phones (model/MeshPacket.java). */
@@ -106,6 +107,20 @@ export interface DeviceInfo {
     vpa: string;
     deviceId: string;
     registeredAt: string; // ISO-8601
+}
+export interface OfflineWallet {
+    vpa: string;
+    escrow: number;
+    perTxnLimit: number;
+    totalLoaded: number;
+    totalSpent: number;
+    version: number;
+}
+
+export interface WalletPolicy {
+    maxAllowance: number;
+    perTxnLimit: number;
+    walletRequired: boolean;
 }
 
 

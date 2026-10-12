@@ -6,6 +6,7 @@ import { hybridEncrypt } from '../../crypto/hybridEncrypt';
 import { buildPacket } from '../../crypto/packetBuilder';
 import type { PaymentPayload, PaymentRequest } from '../../crypto/packetBuilder';
 import { getServerPublicKey } from '../../crypto/serverKey';
+import { closeWallet, getWallet, loadWallet } from '../../api/wallets';
 
 export interface AttackContext {
     device: StoredDevice; // the registered sender the attacks are aimed at
@@ -26,6 +27,7 @@ export interface Attack {
     defence: string; // what stops them
     movesMoney: boolean;
     run: (ctx: AttackContext) => Promise<StepResult[]>;
+    ownsWallet?: boolean; // true: the card sets up its own wallet. Otherwise the page closes alice's wallet first.
 }
 
 // ---- helpers --------------------------------------------------------------
@@ -40,6 +42,12 @@ function describeOutcome(r: IngestResult): string {
 async function send(label: string, expected: string, packet: MeshPacket): Promise<StepResult> {
     const actual = describeOutcome(await ingestPacket(packet));
     return { label, expected, actual, ok: actual === expected };
+}
+
+/** Start the wallet cards from a known state: no wallet, then one holding `amount`. */
+async function freshWallet(vpa: string, amount: number): Promise<void> {
+    await closeWallet(vpa);
+    await loadWallet(vpa, amount);
 }
 
 /** Accounts the sender can pay (everyone except the sender). */
@@ -222,6 +230,7 @@ export const ATTACKS: Attack[] = [
             return [await send('Payment larger than the balance', 'REJECTED:insufficient_balance', packet)];
         },
     },
+
     {
         id: 'double-spend',
         title: 'Double-spend while offline',
@@ -241,6 +250,69 @@ export const ATTACKS: Attack[] = [
                 await send(`Spend ₹${amount} on ${first}`, 'SETTLED', a.packet),
                 await send(`Spend the same ₹${amount} again on ${second}`, 'REJECTED:insufficient_balance', b.packet),
             ];
+        },
+    },
+    {
+        id: 'wallet-limit',
+        title: 'Wallet: exceed the per-payment limit',
+        movesMoney: false,
+        ownsWallet: true,
+        story:
+            'Alice has ₹1000 in her offline wallet and signs one payment of ₹600. The money exists, but a single stolen or mistaken packet should not be able to take that much.',
+        defence:
+            'Every wallet has a per-payment limit (₹500 by default). The server rejects the payment before it touches the escrow.',
+        run: async (ctx) => {
+            await freshWallet(ctx.device.vpa, 1000);
+            const { packet } = await buildPacket(ctx.device, payment(ctx, { amount: 600 }));
+            return [await send('₹600 against a ₹500 per-payment limit', 'REJECTED:per_transaction_limit', packet)];
+        },
+    },
+    {
+        id: 'wallet-allowance',
+        title: 'Wallet: spend more than the allowance',
+        movesMoney: false,
+        ownsWallet: true,
+        story:
+            "Alice's wallet holds ₹100. She signs a ₹150 payment: under the per-payment limit, but more than the wallet contains.",
+        defence:
+            'Offline payments are paid out of the escrow, so a payment larger than what is left is rejected. Her account balance is never touched.',
+        run: async (ctx) => {
+            await freshWallet(ctx.device.vpa, 100);
+            const { packet } = await buildPacket(ctx.device, payment(ctx, { amount: 150 }));
+            return [await send('₹150 from a ₹100 wallet', 'REJECTED:allowance_exceeded', packet)];
+        },
+    },
+    {
+        id: 'wallet-double-spend',
+        title: 'Wallet: double-spend, loss capped at the allowance',
+        movesMoney: true,
+        ownsWallet: true,
+        story:
+            'The earlier double-spend card put alice\'s whole balance at risk. Here she has a ₹600 wallet and signs two ₹400 payments to two different people while offline.',
+        defence:
+            'The server still cannot stop this, because both packets are validly signed. Whichever arrives first settles, and the second is rejected. What changed is the damage: the first receiver is guaranteed to be paid, and the most anyone can lose is the allowance, not the balance.',
+        run: async (ctx) => {
+            const vpa = ctx.device.vpa;
+            await freshWallet(vpa, 600);
+            const before = (await getWallet(vpa))?.totalSpent ?? 0;
+            const [first, second] = others(ctx.device);
+
+            // Both packets are built offline, before either reaches the server.
+            const a = await buildPacket(ctx.device, payment(ctx, { receiverVpa: first, amount: 400 }));
+            const b = await buildPacket(ctx.device, payment(ctx, { receiverVpa: second, amount: 400 }));
+
+            const steps = [
+                await send(`₹400 to ${first}`, 'SETTLED', a.packet),
+                await send(`The same ₹400 again, to ${second}`, 'REJECTED:allowance_exceeded', b.packet),
+            ];
+            const paid = ((await getWallet(vpa))?.totalSpent ?? 0) - before;
+            steps.push({
+                label: 'Total paid out of the wallet',
+                expected: '₹400 (never above the ₹600 allowance)',
+                actual: `₹${paid}`,
+                ok: paid === 400,
+            });
+            return steps;
         },
     },
 ];
