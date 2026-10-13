@@ -148,3 +148,61 @@ export interface DemoSendResponse {
     ttl: number;
     injectedAt: string;
 }
+
+
+// ---- Routing experiments --------------------------------------------------
+
+export type RoutingAlgorithm = 'DIRECT' | 'EPIDEMIC' | 'SPRAY_AND_WAIT' | 'PROPHET';
+
+export interface ExperimentConfig {
+    nodes: number;
+    bridges: number;
+    areaSize: number;
+    range: number;
+    minSpeed: number;
+    maxSpeed: number;
+    maxPauseSteps: number;
+    durationSteps: number;
+    messages: number;
+    generationWindow: number;
+    ttlSteps: number;
+    maxHops: number;
+    sprayCopies: number;
+    runs: number;
+    seed: number;
+    algorithms: RoutingAlgorithm[];
+}
+
+/** Mean, sample standard deviation and 95% confidence half-width over n runs. */
+export interface Stat {
+    mean: number | null;
+    std: number | null;
+    ci95: number | null;
+    n: number;
+}
+
+export interface RunMetrics {
+    run: number;
+    generated: number;
+    delivered: number;
+    deliveryRatio: number;
+    meanLatencySeconds: number | null;
+    meanHops: number | null;
+    transmissions: number;
+    overheadRatio: number | null;
+}
+
+export interface AlgorithmSummary {
+    algorithm: RoutingAlgorithm;
+    runs: RunMetrics[];
+    deliveryRatio: Stat;
+    latencySeconds: Stat;
+    overheadRatio: Stat;
+    hops: Stat;
+    transmissions: Stat;
+}
+
+export interface ExperimentResult {
+    config: ExperimentConfig;
+    algorithms: AlgorithmSummary[];
+}
