@@ -18,6 +18,11 @@ import java.util.Random;
  * Mobility and message creation use their own Random seeded per run, and no algorithm draws
  * from it, so every algorithm sees an identical world for a given run (paired comparison).
  * Nodes and contacts are always processed in index order, so results are deterministic.
+ *
+ * Speed: every node has a version number that changes whenever its packets or its PRoPHET
+ * predictability change. After a pair of phones has fully exchanged, nothing more can move
+ * between them until one of their versions changes, so that contact is skipped. This changes
+ * no result; run(cfg, ms, false) turns it off so a test can prove that.
  */
 public final class RoutingSimulator {
 
@@ -27,15 +32,29 @@ public final class RoutingSimulator {
     private static final double GAMMA = 0.98;
     private static final double AGING_UNIT_STEPS = 30.0;
 
+    /**
+     * false: PRoPHET compares stored predictabilities as they are (a node only ages them when it
+     * starts a contact). true: compares them aged to the current time, as the protocol specifies.
+     */
+    private static final boolean AGE_BEFORE_COMPARING = true;
+
+    private static final long DEFAULT_MAX_MILLIS = 60_000;
+
     private RoutingSimulator() {}
 
     public static ExperimentResult run(ExperimentConfig cfg) {
+        return run(cfg, DEFAULT_MAX_MILLIS, true);
+    }
+
+    /** Exposed so tests can check the time limit and that skipping unchanged contacts changes nothing. */
+    public static ExperimentResult run(ExperimentConfig cfg, long maxMillis, boolean skipUnchangedContacts) {
         cfg.validate();
+        long deadline = System.nanoTime() + maxMillis * 1_000_000L;
         List<AlgorithmSummary> summaries = new ArrayList<>();
         for (Algorithm algo : cfg.algorithms()) {
             List<RunMetrics> runs = new ArrayList<>();
             for (int r = 0; r < cfg.runs(); r++) {
-                runs.add(simulate(cfg, algo, cfg.seed() + r, r));
+                runs.add(simulate(cfg, algo, cfg.seed() + r, r, deadline, skipUnchangedContacts));
             }
             summaries.add(summarise(algo, runs));
         }
@@ -81,6 +100,7 @@ public final class RoutingSimulator {
         final Map<Integer, Copy> buffer = new LinkedHashMap<>(); // insertion order = deterministic
         double pGateway;   // PRoPHET: predictability of meeting any bridge
         double lastAged;
+        int version;       // changes whenever the buffer or pGateway changes
 
         Node(int id, boolean bridge) {
             this.id = id;
@@ -107,7 +127,8 @@ public final class RoutingSimulator {
 
     // ------------------------------------------------------------- simulation
 
-    static RunMetrics simulate(ExperimentConfig cfg, Algorithm algo, long seed, int runIndex) {
+    private static RunMetrics simulate(ExperimentConfig cfg, Algorithm algo, long seed, int runIndex,
+                                       long deadline, boolean skipUnchangedContacts) {
         final int n = cfg.nodes();
         Random rng = new Random(seed);
 
@@ -123,28 +144,39 @@ public final class RoutingSimulator {
         int generationEnd = Math.max(1, (int) (cfg.generationWindow() * cfg.durationSteps()));
         Message[] msgs = new Message[cfg.messages()];
         Map<Integer, List<Integer>> releaseAt = new HashMap<>();
+        Map<Integer, List<Integer>> expireAt = new HashMap<>();
         for (int m = 0; m < msgs.length; m++) {
             int when = rng.nextInt(generationEnd);
             int source = rng.nextInt(sources); // never a bridge
             msgs[m] = new Message(source, when);
             releaseAt.computeIfAbsent(when, k -> new ArrayList<>()).add(m);
+            int expires = when + cfg.ttlSteps();
+            if (expires < cfg.durationSteps()) {
+                expireAt.computeIfAbsent(expires, k -> new ArrayList<>()).add(m);
+            }
         }
 
         double[][] pair = algo == Algorithm.PROPHET ? new double[n][n] : null;
         boolean[][] previous = new boolean[n][n];
         boolean[][] current = new boolean[n][n];
+        long[][] stamp = new long[n][n]; // versions of (i, j) when they last fully exchanged
         double rangeSq = cfg.range() * cfg.range();
         Counters counters = new Counters();
 
         for (int step = 0; step < cfg.durationSteps(); step++) {
-            final int now = step;
+            if ((step & 255) == 0 && System.nanoTime() > deadline) {
+                throw new IllegalArgumentException(
+                        "The experiment ran past the time limit; reduce phones, duration, payments, runs or algorithms");
+            }
 
             // 1. new packets appear at their sources
             List<Integer> born = releaseAt.get(step);
             if (born != null) {
                 for (int m : born) {
                     int copies = algo == Algorithm.SPRAY_AND_WAIT ? cfg.sprayCopies() : 1;
-                    nodes[msgs[m].source].buffer.put(m, new Copy(m, 0, copies));
+                    Node source = nodes[msgs[m].source];
+                    source.buffer.put(m, new Copy(m, 0, copies));
+                    source.version++;
                 }
             }
 
@@ -152,8 +184,13 @@ public final class RoutingSimulator {
             for (Node node : nodes) move(node, cfg, rng);
 
             // 3. expired packets disappear everywhere
-            for (Node node : nodes) {
-                node.buffer.values().removeIf(c -> now - msgs[c.messageId].createdStep >= cfg.ttlSteps());
+            List<Integer> expiring = expireAt.get(step);
+            if (expiring != null) {
+                for (int m : expiring) {
+                    for (Node node : nodes) {
+                        if (node.buffer.remove(m) != null) node.version++;
+                    }
+                }
             }
 
             // 4. who is in range of whom
@@ -173,8 +210,10 @@ public final class RoutingSimulator {
                     if (algo == Algorithm.PROPHET && !previous[i][j]) {
                         updatePredictability(nodes[i], nodes[j], pair, step); // only when a contact begins
                     }
+                    if (skipUnchangedContacts && stamp[i][j] == versions(nodes[i], nodes[j])) continue;
                     transfer(nodes[i], nodes[j], cfg, algo, msgs, counters, step);
                     transfer(nodes[j], nodes[i], cfg, algo, msgs, counters, step);
+                    stamp[i][j] = versions(nodes[i], nodes[j]);
                 }
             }
 
@@ -201,15 +240,19 @@ public final class RoutingSimulator {
                 counters.transmissions, overhead);
     }
 
+    private static long versions(Node a, Node b) {
+        return ((long) a.version << 32) | (b.version & 0xFFFFFFFFL);
+    }
+
     // --------------------------------------------------------------- routing
 
     private static void transfer(Node from, Node to, ExperimentConfig cfg, Algorithm algo,
                                  Message[] msgs, Counters counters, int step) {
         if (from.bridge || from.buffer.isEmpty()) return; // bridges only receive
-        for (Copy copy : new ArrayList<>(from.buffer.values())) {
+        for (Copy copy : from.buffer.values()) { // only to.buffer changes below, never from.buffer
             if (to.buffer.containsKey(copy.messageId)) continue;
             if (cfg.maxHops() > 0 && copy.hops >= cfg.maxHops()) continue;
-            int give = grant(algo, copy, from, to);
+            int give = grant(algo, copy, from, to, step);
             if (give == 0) continue;
 
             counters.transmissions++;
@@ -225,11 +268,12 @@ public final class RoutingSimulator {
                 to.buffer.put(copy.messageId, new Copy(copy.messageId, copy.hops + 1, give));
                 if (algo == Algorithm.SPRAY_AND_WAIT) copy.copies -= give;
             }
+            to.version++;
         }
     }
 
     /** How many copies the receiver gets; 0 means "do not forward this packet". */
-    private static int grant(Algorithm algo, Copy copy, Node from, Node to) {
+    private static int grant(Algorithm algo, Copy copy, Node from, Node to, int step) {
         switch (algo) {
             case DIRECT:
                 return (to.bridge && copy.hops == 0) ? 1 : 0; // only the source hands over, only to a bridge
@@ -238,11 +282,21 @@ public final class RoutingSimulator {
             case SPRAY_AND_WAIT:
                 if (to.bridge) return 1;                      // the wait phase still delivers
                 return copy.copies >= 2 ? copy.copies / 2 : 0; // binary spraying
-            case PROPHET:
-                return (to.bridge || to.pGateway > from.pGateway) ? 1 : 0;
+            case PROPHET: {
+                if (to.bridge) return 1;
+                double mine = AGE_BEFORE_COMPARING ? effective(from, step) : from.pGateway;
+                double theirs = AGE_BEFORE_COMPARING ? effective(to, step) : to.pGateway;
+                return theirs > mine ? 1 : 0;
+            }
             default:
                 return 0;
         }
+    }
+
+    /** The predictability aged to `step`. Ordering between two such values never changes with time. */
+    private static double effective(Node node, int step) {
+        if (node.bridge) return 1.0;
+        return node.pGateway * Math.pow(GAMMA, (step - node.lastAged) / AGING_UNIT_STEPS);
     }
 
     private static void updatePredictability(Node a, Node b, double[][] pair, int step) {
@@ -263,6 +317,8 @@ public final class RoutingSimulator {
             a.pGateway = aOld + (1 - aOld) * pair[a.id][b.id] * bOld * BETA;
             b.pGateway = bOld + (1 - bOld) * pair[b.id][a.id] * aOld * BETA;
         }
+        a.version++;
+        b.version++;
     }
 
     private static void age(Node node, double[][] pair, int step) {

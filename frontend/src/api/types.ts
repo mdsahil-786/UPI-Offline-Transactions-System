@@ -206,3 +206,10 @@ export interface ExperimentResult {
     config: ExperimentConfig;
     algorithms: AlgorithmSummary[];
 }
+export type SweepParameter = 'MAX_HOPS' | 'TTL_STEPS' | 'RANGE' | 'NODES' | 'BRIDGES' | 'SPRAY_COPIES';
+
+export interface SweepResult {
+    parameter: SweepParameter;
+    values: number[];
+    points: ExperimentResult[]; // points[i] was run with values[i]
+}

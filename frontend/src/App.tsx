@@ -7,12 +7,14 @@ import { SecurityLabPage } from './features/security/SecurityLabPage';
 import { SimulationPage } from './features/simulation/SimulationPage';
 
 import { ExperimentsPage } from './features/experiments/ExperimentsPage';
+import { SweepPage } from './features/experiments/SweepPage';
 
 const NAV_ITEMS = [
     { to: '/wallet', label: 'Wallet' },
     { to: '/simulation', label: 'Simulation' },
     { to: '/security', label: 'Security Lab' },
     { to: '/experiments', label: 'Experiments' },
+    { to: '/sweeps', label: 'Sweeps' },
     { to: '/admin', label: 'Admin' },
 ];
 
@@ -45,6 +47,7 @@ export function App() {
                     <Route path="/security" element={<SecurityLabPage />} />
                     <Route path="/simulation" element={<SimulationPage />} />
                     <Route path="/experiments" element={<ExperimentsPage />} />clae
+                    <Route path="/sweeps" element={<SweepPage />} />
                 </Routes>
             </main>
         </>

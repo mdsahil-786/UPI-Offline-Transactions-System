@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import type { ReactNode } from 'react';
 import type { ExperimentConfig, RoutingAlgorithm } from '../../api/types';
 import { Button } from '../../components/Button';
 import styles from './Experiments.module.css';
@@ -38,9 +39,11 @@ interface Props {
     defaults: ExperimentConfig;
     running: boolean;
     onRun: (config: ExperimentConfig) => void;
+    runLabel?: string;
+    children?: ReactNode; // extra controls shown just above the buttons
 }
 
-export function ConfigForm({ defaults, running, onRun }: Props) {
+export function ConfigForm({ defaults, running, onRun, runLabel = 'Run experiment', children }: Props) {
     const [draft, setDraft] = useState<Draft>(() => toDraft(defaults));
     const [algorithms, setAlgorithms] = useState<RoutingAlgorithm[]>(defaults.algorithms);
     const [problem, setProblem] = useState<string | null>(null);
@@ -107,11 +110,13 @@ export function ConfigForm({ defaults, running, onRun }: Props) {
                 ))}
             </div>
 
+            {children}
+
             {problem && <div className={styles.error}>{problem}</div>}
 
             <div className={styles.actions}>
                 <Button onClick={submit} disabled={running}>
-                    {running ? 'Running… this can take several seconds' : 'Run experiment'}
+                    {running ? 'Running… this can take several seconds' : runLabel}
                 </Button>
                 <Button variant="secondary" onClick={reset} disabled={running}>
                     Reset to defaults
